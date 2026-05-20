@@ -78,7 +78,9 @@ class TestFusedSwigluScaleForward(unittest.TestCase):
                 return_value=mock_result,
             ) as mock_op:
                 result = fused_swiglu_scale_forward(x, scale)
-                mock_op.assert_called_once_with(x, scale)
+                # fused_swiglu_scale_forward passes (x, scale, cv) where
+                # cv = _resolve_clamp(clamp_value); None → inf
+                mock_op.assert_called_once_with(x, scale, float("inf"))
 
     def test_forward_output_dtype_matches_input(self):
         """Test output dtype matches input dtype."""
@@ -173,7 +175,11 @@ class TestFusedSwigluScaleBackward(unittest.TestCase):
                 return_value=(mock_dx, mock_ds),
             ) as mock_op:
                 d_x, d_scale = fused_swiglu_scale_backward(x, scale, out_grad)
-                mock_op.assert_called_once_with(x, scale, out_grad)
+                # fused_swiglu_scale_backward passes (x, scale, out_grad, cv)
+                # where cv = _resolve_clamp(clamp_value); None → inf
+                mock_op.assert_called_once_with(
+                    x, scale, out_grad, float("inf")
+                )
 
 
 class TestFusedSwigluScaleMath(unittest.TestCase):

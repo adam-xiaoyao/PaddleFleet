@@ -61,7 +61,11 @@ class TestSPAQ(unittest.TestCase):
         golden_res = F.swiglu(x) * prob
 
         fp8_x_out_ref, fp32_x_scale_ref = fuse_weighted_swiglu_fp8_quant(
-            x, prob, using_pow2_scaling=False, use_ue8m0=False
+            x,
+            prob,
+            using_pow2_scaling=False,
+            use_ue8m0=False,
+            clamp_value=float("inf"),
         )
 
         dequantized_res = self.dequantize_fp8_to_bf16(
@@ -104,7 +108,11 @@ class TestSPAQ(unittest.TestCase):
 
         # spaq test with using_pow2_scaling=True, use_ue8m0=False
         fp8_x_out_ref, fp32_x_scale_ref = fuse_weighted_swiglu_fp8_quant(
-            x, prob, using_pow2_scaling=True, use_ue8m0=False
+            x,
+            prob,
+            using_pow2_scaling=True,
+            use_ue8m0=False,
+            clamp_value=float("inf"),
         )
         out_ref = paddle.empty([M, N], dtype="bfloat16")
         deep_gemm.fp8_gemm_nt(
@@ -115,7 +123,11 @@ class TestSPAQ(unittest.TestCase):
 
         # spaq test with using_pow2_scaling=True, use_ue8m0=True
         fp8_x_out, ue8m0_x_scale = fuse_weighted_swiglu_fp8_quant(
-            x, prob, using_pow2_scaling=True, use_ue8m0=True
+            x,
+            prob,
+            using_pow2_scaling=True,
+            use_ue8m0=True,
+            clamp_value=float("inf"),
         )
         out = paddle.empty([M, N], dtype="bfloat16")
         deep_gemm.fp8_gemm_nt(

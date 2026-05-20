@@ -41,7 +41,8 @@ __global__ void VectorizedFusedSwiGLUFwd(const T* __restrict__ x,
                                          const ScaleT* __restrict__ scale,
                                          T* __restrict__ out,
                                          int hidden_size,
-                                         int row_stride) {
+                                         int row_stride,
+                                         float clamp_value) {
   int row = blockIdx.x;
   int tid = threadIdx.x;
   int lane_idx = tid * VEC_SIZE;
@@ -66,7 +67,11 @@ __global__ void VectorizedFusedSwiGLUFwd(const T* __restrict__ x,
       float g = static_cast<float>(gate_ptr[i]);
       float v = static_cast<float>(val_ptr[i]);
 
-      float swiglu = (g * precise_sigmoid(g)) * v;
+      // Clamp inputs (clamp_value=+inf is a no-op)
+      float g_eff = fminf(g, clamp_value);
+      float v_eff = fmaxf(fminf(v, clamp_value), -clamp_value);
+
+      float swiglu = (g_eff * precise_sigmoid(g_eff)) * v_eff;
       res_buffer[i] = static_cast<T>(swiglu * s);
     }
 
@@ -85,7 +90,8 @@ __global__ void VectorizedFusedSwiGLUBwd(const T* __restrict__ x,
                                          T* __restrict__ d_x,
                                          ScaleT* __restrict__ d_scale,
                                          int hidden_size,
-                                         int row_stride) {
+                                         int row_stride,
+                                         float clamp_value) {
   int row = blockIdx.x;
   int tid = threadIdx.x;
   int lane_idx = tid * VEC_SIZE;
@@ -116,17 +122,24 @@ __global__ void VectorizedFusedSwiGLUBwd(const T* __restrict__ x,
       float v = static_cast<float>(val_ptr[i]);
       float dout = static_cast<float>(dout_ptr[i]);
 
-      float sig_g = precise_sigmoid(g);
-      float swiglu_val = (g * sig_g) * v;
+      // Clamp inputs (clamp_value=+inf is a no-op for both clamp and mask)
+      float g_eff = fminf(g, clamp_value);
+      float v_eff = fmaxf(fminf(v, clamp_value), -clamp_value);
+      float g_mask = (g <= clamp_value) ? 1.0f : 0.0f;
+      float v_mask = (v <= clamp_value && v >= -clamp_value) ? 1.0f : 0.0f;
+
+      float sig_g = precise_sigmoid(g_eff);
+      float silu_g = g_eff * sig_g;
+      float swiglu_val = silu_g * v_eff;
 
       local_d_scale_sum += dout * swiglu_val;
 
       float d_u = dout * s;
-      float silu_g = g * sig_g;
 
-      dv_buffer[i] = static_cast<T>(d_u * silu_g);
+      dv_buffer[i] = static_cast<T>(d_u * silu_g * v_mask);
 
-      float d_g_val = d_u * v * sig_g * (1.0f + g * (1.0f - sig_g));
+      float d_g_val =
+          d_u * v_eff * sig_g * (1.0f + g_eff * (1.0f - sig_g)) * g_mask;
       dg_buffer[i] = static_cast<T>(d_g_val);
     }
 
@@ -156,8 +169,9 @@ __global__ void VectorizedFusedSwiGLUBwd(const T* __restrict__ x,
 // Host Wrappers & Op Registration
 // ==========================================================================
 
-std::vector<paddle::Tensor> FusedSwiGLUScaleForward(
-    const paddle::Tensor& x, const paddle::Tensor& scale) {
+std::vector<paddle::Tensor> FusedSwiGLUScaleForward(const paddle::Tensor& x,
+                                                    const paddle::Tensor& scale,
+                                                    float clamp_value) {
   auto rows = x.shape()[0];
   auto hidden2 = x.shape()[1];
   auto hidden_size = hidden2 / 2;
@@ -187,7 +201,8 @@ std::vector<paddle::Tensor> FusedSwiGLUScaleForward(
               scale.data<float>(),
               reinterpret_cast<cuda_bf16*>(out.data<paddle_bf16>()),
               hidden_size,
-              hidden2);
+              hidden2,
+              clamp_value);
     } else {
       VectorizedFusedSwiGLUFwd<cuda_bf16, cuda_bf16, 8>
           <<<grid_size, block_size, 0, stream>>>(
@@ -195,7 +210,8 @@ std::vector<paddle::Tensor> FusedSwiGLUScaleForward(
               reinterpret_cast<const cuda_bf16*>(scale.data<paddle_bf16>()),
               reinterpret_cast<cuda_bf16*>(out.data<paddle_bf16>()),
               hidden_size,
-              hidden2);
+              hidden2,
+              clamp_value);
     }
   } else if (x.dtype() == paddle::DataType::FLOAT32) {
     VectorizedFusedSwiGLUFwd<float, float, 4>
@@ -203,7 +219,8 @@ std::vector<paddle::Tensor> FusedSwiGLUScaleForward(
                                                scale.data<float>(),
                                                out.data<float>(),
                                                hidden_size,
-                                               hidden2);
+                                               hidden2,
+                                               clamp_value);
   }
   return {out};
 }
@@ -211,7 +228,8 @@ std::vector<paddle::Tensor> FusedSwiGLUScaleForward(
 std::vector<paddle::Tensor> FusedSwiGLUScaleBackward(
     const paddle::Tensor& x,
     const paddle::Tensor& scale,
-    const paddle::Tensor& d_out) {
+    const paddle::Tensor& d_out,
+    float clamp_value) {
   auto rows = x.shape()[0];
   auto hidden2 = x.shape()[1];
   auto hidden_size = hidden2 / 2;
@@ -244,7 +262,8 @@ std::vector<paddle::Tensor> FusedSwiGLUScaleBackward(
               reinterpret_cast<cuda_bf16*>(d_x.data<paddle_bf16>()),
               d_scale.data<float>(),
               hidden_size,
-              hidden2);
+              hidden2,
+              clamp_value);
     } else {
       VectorizedFusedSwiGLUBwd<cuda_bf16, cuda_bf16, 8>
           <<<grid_size, block_size, 0, stream>>>(
@@ -254,7 +273,8 @@ std::vector<paddle::Tensor> FusedSwiGLUScaleBackward(
               reinterpret_cast<cuda_bf16*>(d_x.data<paddle_bf16>()),
               reinterpret_cast<cuda_bf16*>(d_scale.data<paddle_bf16>()),
               hidden_size,
-              hidden2);
+              hidden2,
+              clamp_value);
     }
   } else if (x.dtype() == paddle::DataType::FLOAT32) {
     VectorizedFusedSwiGLUBwd<float, float, 4>
@@ -264,7 +284,8 @@ std::vector<paddle::Tensor> FusedSwiGLUScaleBackward(
                                                d_x.data<float>(),
                                                d_scale.data<float>(),
                                                hidden_size,
-                                               hidden2);
+                                               hidden2,
+                                               clamp_value);
   }
   return {d_x, d_scale};
 }
@@ -286,6 +307,7 @@ std::vector<paddle::DataType> FusedGradInferDtype(paddle::DataType x_dtype,
 PD_BUILD_OP(fused_swiglu_scale_bwd)
     .Inputs({"X", "Scale", "DOut"})
     .Outputs({"DX", "DScale"})
+    .Attrs({"clamp_value: float"})
     .SetKernelFn(PD_KERNEL(FusedSwiGLUScaleBackward))
     .SetInferShapeFn(PD_INFER_SHAPE(FusedGradInferShape))
     .SetInferDtypeFn(PD_INFER_DTYPE(FusedGradInferDtype));
@@ -293,6 +315,7 @@ PD_BUILD_OP(fused_swiglu_scale_bwd)
 PD_BUILD_OP(fused_swiglu_scale)
     .Inputs({"X", "Scale"})
     .Outputs({"Out"})
+    .Attrs({"clamp_value: float"})
     .SetKernelFn(PD_KERNEL(FusedSwiGLUScaleForward))
     .SetInferShapeFn(
         PD_INFER_SHAPE(FusedGradInferShape))  // Reuse infer shape logic
@@ -301,4 +324,5 @@ PD_BUILD_OP(fused_swiglu_scale)
 PD_BUILD_GRAD_OP(fused_swiglu_scale)
     .Inputs({"X", "Scale", paddle::Grad("Out")})
     .Outputs({paddle::Grad("X"), paddle::Grad("Scale")})
+    .Attrs({"clamp_value: float"})
     .SetKernelFn(PD_KERNEL(FusedSwiGLUScaleBackward));

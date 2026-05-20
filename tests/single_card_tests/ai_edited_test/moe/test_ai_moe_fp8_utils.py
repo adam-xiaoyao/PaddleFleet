@@ -366,6 +366,63 @@ class TestFP8Utils(unittest.TestCase):
         result = swiglu(x, y=y)
         self.assertEqual(result.shape, [4, 4])
 
+    def test_experts_group_gemm_node_clamp_value_init(self):
+        """Test ExpertsGroupGemmContiguousNode stores clamp_value."""
+        from paddlefleet.transformer.moe.fp8_utils import (
+            ExpertsGroupGemmContiguousNode,
+        )
+
+        custom_map = MagicMock()
+        custom_map.experts = [MagicMock(), MagicMock()]
+        node = ExpertsGroupGemmContiguousNode(
+            custom_map,
+            use_fp8_mlp=False,
+            moe_expert_fusion=False,
+            clamp_value=10.0,
+        )
+        self.assertEqual(node.clamp_value, 10.0)
+
+    def test_experts_group_gemm_node_clamp_value_default_none(self):
+        """Test clamp_value defaults to None."""
+        from paddlefleet.transformer.moe.fp8_utils import (
+            ExpertsGroupGemmContiguousNode,
+        )
+
+        custom_map = MagicMock()
+        custom_map.experts = [MagicMock(), MagicMock()]
+        node = ExpertsGroupGemmContiguousNode(
+            custom_map,
+            use_fp8_mlp=False,
+            moe_expert_fusion=False,
+        )
+        self.assertIsNone(node.clamp_value)
+
+    def test_fwd_swiglu_fp8_clamp_value_resolve(self):
+        """Test fwd_swiglu_fp8 resolves clamp_value to float or inf."""
+        from paddlefleet.transformer.moe.fp8_utils import (
+            ExpertsGroupGemmContiguousNode,
+        )
+
+        custom_map = MagicMock()
+        custom_map.experts = [MagicMock(), MagicMock()]
+        # clamp_value=None → resolves to float("inf") in fwd_swiglu_fp8
+        node_none = ExpertsGroupGemmContiguousNode(
+            custom_map,
+            use_fp8_mlp=False,
+            moe_expert_fusion=False,
+            clamp_value=None,
+        )
+        self.assertIsNone(node_none.clamp_value)
+
+        # clamp_value=5.0 → resolves to float(5.0)
+        node_clamped = ExpertsGroupGemmContiguousNode(
+            custom_map,
+            use_fp8_mlp=False,
+            moe_expert_fusion=False,
+            clamp_value=5.0,
+        )
+        self.assertEqual(node_clamped.clamp_value, 5.0)
+
 
 if __name__ == "__main__":
     unittest.main()
