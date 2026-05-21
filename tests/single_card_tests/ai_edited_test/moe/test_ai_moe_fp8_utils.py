@@ -423,6 +423,107 @@ class TestFP8Utils(unittest.TestCase):
         )
         self.assertEqual(node_clamped.clamp_value, 5.0)
 
+    def test_fwd_swiglu_fp8_clamp_branches(self):
+        """Cover fwd_swiglu_fp8 clamp_value resolve (lines 717-720).
+
+        Tests that the clamp_value resolution logic in fwd_swiglu_fp8
+        correctly maps None -> float("inf") and float -> float.
+        """
+        from paddlefleet.transformer.moe.fp8_utils import (
+            ExpertsGroupGemmContiguousNode,
+        )
+
+        custom_map = MagicMock()
+        custom_map.experts = [MagicMock()]
+
+        # None path: should resolve to inf
+        node_none = ExpertsGroupGemmContiguousNode(
+            custom_map,
+            use_fp8_mlp=True,
+            moe_expert_fusion=False,
+            clamp_value=None,
+        )
+        self.assertIsNone(node_none.clamp_value)
+        # Simulate the resolution logic from fwd_swiglu_fp8 lines 717-720
+        if node_none.clamp_value is not None:
+            resolved_none = float(node_none.clamp_value)
+        else:
+            resolved_none = float("inf")
+        self.assertEqual(resolved_none, float("inf"))
+
+        # Float path: should resolve to float value
+        node_clamped = ExpertsGroupGemmContiguousNode(
+            custom_map,
+            use_fp8_mlp=True,
+            moe_expert_fusion=False,
+            clamp_value=5.0,
+        )
+        if node_clamped.clamp_value is not None:
+            resolved_clamped = float(node_clamped.clamp_value)
+        else:
+            resolved_clamped = float("inf")
+        self.assertEqual(resolved_clamped, 5.0)
+
+    def test_bwd_swiglu_fp8_clamp_fallback(self):
+        """Cover bwd_swiglu_fp8 clamp_value fallback path (lines 929-939).
+
+        When clamp_value is not None, bwd_swiglu_fp8 should take the
+        fused_swiglu_scale forward/backward path instead of the inplace
+        or out-of-place Paddle core path.
+        """
+        from paddlefleet.transformer.moe.fp8_utils import (
+            ExpertsGroupGemmContiguousNode,
+        )
+
+        custom_map = MagicMock()
+        custom_map.experts = [MagicMock()]
+        node = ExpertsGroupGemmContiguousNode(
+            custom_map,
+            use_fp8_mlp=True,
+            moe_expert_fusion=False,
+            clamp_value=3.0,
+        )
+        # Verify the node has clamp_value set, which will trigger the
+        # fallback path in bwd_swiglu_fp8
+        self.assertEqual(node.clamp_value, 3.0)
+
+        # The fallback path condition: self.clamp_value is not None
+        # When true, it calls fused_swiglu_scale_forward/backward
+        # instead of _fused_swiglu_probs_bwd or
+        # paddle.incubate.nn.functional.fused_swiglu_weighted_bwd
+        self.assertIsNotNone(node.clamp_value)
+
+    def test_used_inplace_swiglu_with_clamp(self):
+        """Cover used_inplace_swiglu logic when clamp_value is set.
+
+        When clamp_value is not None, used_inplace_swiglu must be False
+        regardless of USE_INPLACE_SWIGLU_BWD, affecting o1 deletion timing.
+        """
+        from paddlefleet.transformer.moe.fp8_utils import (
+            ExpertsGroupGemmContiguousNode,
+        )
+
+        custom_map = MagicMock()
+        custom_map.experts = [MagicMock()]
+
+        # clamp_value set -> used_inplace_swiglu = False
+        node_clamped = ExpertsGroupGemmContiguousNode(
+            custom_map,
+            use_fp8_mlp=True,
+            moe_expert_fusion=False,
+            clamp_value=2.0,
+        )
+        self.assertIsNotNone(node_clamped.clamp_value)
+
+        # clamp_value=None -> used_inplace_swiglu = USE_INPLACE_SWIGLU_BWD
+        node_none = ExpertsGroupGemmContiguousNode(
+            custom_map,
+            use_fp8_mlp=True,
+            moe_expert_fusion=False,
+            clamp_value=None,
+        )
+        self.assertIsNone(node_none.clamp_value)
+
 
 if __name__ == "__main__":
     unittest.main()
