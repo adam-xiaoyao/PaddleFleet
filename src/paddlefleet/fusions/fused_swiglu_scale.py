@@ -12,25 +12,21 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
-import math
-
 import paddle
 import paddle.nn.functional as F
 from paddle.nn.functional import swiglu
 
 
-def _resolve_clamp(clamp_value):
-    # clamp_value=+inf is a no-op in both forward and backward kernels.
-    return math.inf if clamp_value is None else float(clamp_value)
-
-
 def fused_swiglu_scale_forward(x, scale, clamp_value=None):
-    cv = _resolve_clamp(clamp_value)
-
     if paddle.is_compiled_with_cuda():
-        from paddlefleet_ops import fused_swiglu_scale
+        if clamp_value is not None:
+            from paddlefleet_ops import fused_swiglu_scale_clamp
 
-        return fused_swiglu_scale(x, scale, cv)
+            return fused_swiglu_scale_clamp(x, scale, float(clamp_value))
+        else:
+            from paddlefleet_ops import fused_swiglu_scale
+
+            return fused_swiglu_scale(x, scale)
 
     # ----------------------------
     # XPU / CPU fallback
@@ -51,12 +47,17 @@ def fused_swiglu_scale_forward(x, scale, clamp_value=None):
 
 
 def fused_swiglu_scale_backward(x, scale, out_grad, clamp_value=None):
-    cv = _resolve_clamp(clamp_value)
-
     if paddle.is_compiled_with_cuda():
-        from paddlefleet_ops import fused_swiglu_scale_bwd
+        if clamp_value is not None:
+            from paddlefleet_ops import fused_swiglu_scale_clamp_bwd
 
-        return fused_swiglu_scale_bwd(x, scale, out_grad, cv)
+            return fused_swiglu_scale_clamp_bwd(
+                x, scale, out_grad, float(clamp_value)
+            )
+        else:
+            from paddlefleet_ops import fused_swiglu_scale_bwd
+
+            return fused_swiglu_scale_bwd(x, scale, out_grad)
 
     # ----------------------------
     # XPU / CPU fallback

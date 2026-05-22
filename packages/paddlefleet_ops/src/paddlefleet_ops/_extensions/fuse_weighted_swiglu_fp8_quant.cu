@@ -567,7 +567,9 @@ void dispatch_fused_spaq(const phi::bfloat16* x_data,
   }
 }
 
-std::vector<paddle::Tensor> FusedWeightedSwigluActQuantKernel(
+// ---- Clamped variant (with clamp_value attribute) ----
+
+std::vector<paddle::Tensor> FusedWeightedSwigluActQuantClampKernel(
     const paddle::Tensor& x,
     const paddle::optional<paddle::Tensor>& prob,
     const bool using_pow2_scaling,
@@ -683,10 +685,35 @@ std::vector<paddle::Tensor> FusedWeightedSwigluActQuantKernel(
   return {out, scale};
 }
 
+// ---- Original variant (no clamp_value attribute, internally uses +inf) ----
+
+std::vector<paddle::Tensor> FusedWeightedSwigluActQuantKernel(
+    const paddle::Tensor& x,
+    const paddle::optional<paddle::Tensor>& prob,
+    const bool using_pow2_scaling,
+    const bool use_ue8m0) {
+  return FusedWeightedSwigluActQuantClampKernel(
+      x,
+      prob,
+      using_pow2_scaling,
+      use_ue8m0,
+      std::numeric_limits<float>::infinity());
+}
+
+// ---- Op Registration ----
+
+// Original op (no clamp_value attr, backward compatible)
 PD_BUILD_OP(fuse_weighted_swiglu_fp8_quant)
+    .Inputs({"expert_out_list", paddle::Optional("prob")})
+    .Attrs({"using_pow2_scaling: bool", "use_ue8m0: bool"})
+    .Outputs({"out", "scale"})
+    .SetKernelFn(PD_KERNEL(FusedWeightedSwigluActQuantKernel));
+
+// Clamped variant (with clamp_value attr)
+PD_BUILD_OP(fuse_weighted_swiglu_fp8_quant_clamp)
     .Inputs({"expert_out_list", paddle::Optional("prob")})
     .Attrs({"using_pow2_scaling: bool",
             "use_ue8m0: bool",
             "clamp_value: float"})
     .Outputs({"out", "scale"})
-    .SetKernelFn(PD_KERNEL(FusedWeightedSwigluActQuantKernel));
+    .SetKernelFn(PD_KERNEL(FusedWeightedSwigluActQuantClampKernel));

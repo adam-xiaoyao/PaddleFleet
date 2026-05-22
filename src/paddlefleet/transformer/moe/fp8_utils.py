@@ -30,6 +30,7 @@ try:
         fuse_stack_fp8_quant,
         fuse_stack_transpose_fp8_quant,
         fuse_weighted_swiglu_fp8_quant,
+        fuse_weighted_swiglu_fp8_quant_clamp,
     )
 except (ImportError, RuntimeError):
     pass
@@ -715,17 +716,20 @@ class ExpertsGroupGemmContiguousNode:
         w2_scale = w2_scale.reshape([num_expert, -1, w2_scale.shape[-1]])
 
         if self.clamp_value is not None:
-            clamp_value = float(self.clamp_value)
+            o2_fp8, o2_scale = fuse_weighted_swiglu_fp8_quant_clamp(
+                o1,
+                unzipped_probs,
+                using_pow2_scaling=True,
+                use_ue8m0=self.use_ue8m0,
+                clamp_value=float(self.clamp_value),
+            )
         else:
-            clamp_value = float("inf")
-
-        o2_fp8, o2_scale = fuse_weighted_swiglu_fp8_quant(
-            o1,
-            unzipped_probs,
-            using_pow2_scaling=True,
-            use_ue8m0=self.use_ue8m0,
-            clamp_value=clamp_value,
-        )
+            o2_fp8, o2_scale = fuse_weighted_swiglu_fp8_quant(
+                o1,
+                unzipped_probs,
+                using_pow2_scaling=True,
+                use_ue8m0=self.use_ue8m0,
+            )
         o2_scale = paddle.transpose(
             paddle.transpose(o2_scale, [1, 0]).contiguous(), [1, 0]
         )

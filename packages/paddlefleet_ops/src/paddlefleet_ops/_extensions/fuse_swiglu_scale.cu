@@ -169,9 +169,10 @@ __global__ void VectorizedFusedSwiGLUBwd(const T* __restrict__ x,
 // Host Wrappers & Op Registration
 // ==========================================================================
 
-std::vector<paddle::Tensor> FusedSwiGLUScaleForward(const paddle::Tensor& x,
-                                                    const paddle::Tensor& scale,
-                                                    float clamp_value) {
+// ---- Clamped variants (with clamp_value attribute) ----
+
+std::vector<paddle::Tensor> FusedSwiGLUScaleClampForward(
+    const paddle::Tensor& x, const paddle::Tensor& scale, float clamp_value) {
   auto rows = x.shape()[0];
   auto hidden2 = x.shape()[1];
   auto hidden_size = hidden2 / 2;
@@ -225,7 +226,7 @@ std::vector<paddle::Tensor> FusedSwiGLUScaleForward(const paddle::Tensor& x,
   return {out};
 }
 
-std::vector<paddle::Tensor> FusedSwiGLUScaleBackward(
+std::vector<paddle::Tensor> FusedSwiGLUScaleClampBackward(
     const paddle::Tensor& x,
     const paddle::Tensor& scale,
     const paddle::Tensor& d_out,
@@ -290,7 +291,34 @@ std::vector<paddle::Tensor> FusedSwiGLUScaleBackward(
   return {d_x, d_scale};
 }
 
-// Registration
+// ---- Original ops (no clamp_value attribute, internally uses +inf) ----
+
+std::vector<paddle::Tensor> FusedSwiGLUScaleForward(
+    const paddle::Tensor& x, const paddle::Tensor& scale) {
+  return FusedSwiGLUScaleClampForward(
+      x, scale, std::numeric_limits<float>::infinity());
+}
+
+std::vector<paddle::Tensor> FusedSwiGLUScaleBackward(
+    const paddle::Tensor& x,
+    const paddle::Tensor& scale,
+    const paddle::Tensor& d_out) {
+  return FusedSwiGLUScaleClampBackward(
+      x, scale, d_out, std::numeric_limits<float>::infinity());
+}
+
+// ---- InferShape / InferDtype helpers ----
+
+std::vector<std::vector<int64_t>> FusedSwiGLUScaleInferShape(
+    std::vector<int64_t> x_shape, std::vector<int64_t> scale_shape) {
+  return {x_shape};
+}
+
+std::vector<paddle::DataType> FusedSwiGLUScaleInferDtype(
+    paddle::DataType x_dtype, paddle::DataType scale_dtype) {
+  return {x_dtype};
+}
+
 std::vector<std::vector<int64_t>> FusedGradInferShape(
     std::vector<int64_t> x_shape,
     std::vector<int64_t> scale_shape,
@@ -304,25 +332,47 @@ std::vector<paddle::DataType> FusedGradInferDtype(paddle::DataType x_dtype,
   return {x_dtype, scale_dtype};
 }
 
-PD_BUILD_OP(fused_swiglu_scale_bwd)
-    .Inputs({"X", "Scale", "DOut"})
-    .Outputs({"DX", "DScale"})
-    .Attrs({"clamp_value: float"})
-    .SetKernelFn(PD_KERNEL(FusedSwiGLUScaleBackward))
-    .SetInferShapeFn(PD_INFER_SHAPE(FusedGradInferShape))
-    .SetInferDtypeFn(PD_INFER_DTYPE(FusedGradInferDtype));
+// ---- Original op registration (no clamp_value attr) ----
 
 PD_BUILD_OP(fused_swiglu_scale)
     .Inputs({"X", "Scale"})
     .Outputs({"Out"})
-    .Attrs({"clamp_value: float"})
     .SetKernelFn(PD_KERNEL(FusedSwiGLUScaleForward))
-    .SetInferShapeFn(
-        PD_INFER_SHAPE(FusedGradInferShape))  // Reuse infer shape logic
-    .SetInferDtypeFn(PD_INFER_DTYPE(FusedGradInferDtype));
+    .SetInferShapeFn(PD_INFER_SHAPE(FusedSwiGLUScaleInferShape))
+    .SetInferDtypeFn(PD_INFER_DTYPE(FusedSwiGLUScaleInferDtype));
 
 PD_BUILD_GRAD_OP(fused_swiglu_scale)
     .Inputs({"X", "Scale", paddle::Grad("Out")})
     .Outputs({paddle::Grad("X"), paddle::Grad("Scale")})
-    .Attrs({"clamp_value: float"})
     .SetKernelFn(PD_KERNEL(FusedSwiGLUScaleBackward));
+
+PD_BUILD_OP(fused_swiglu_scale_bwd)
+    .Inputs({"X", "Scale", "DOut"})
+    .Outputs({"DX", "DScale"})
+    .SetKernelFn(PD_KERNEL(FusedSwiGLUScaleBackward))
+    .SetInferShapeFn(PD_INFER_SHAPE(FusedGradInferShape))
+    .SetInferDtypeFn(PD_INFER_DTYPE(FusedGradInferDtype));
+
+// ---- Clamped op registration (with clamp_value attr) ----
+
+PD_BUILD_OP(fused_swiglu_scale_clamp)
+    .Inputs({"X", "Scale"})
+    .Outputs({"Out"})
+    .Attrs({"clamp_value: float"})
+    .SetKernelFn(PD_KERNEL(FusedSwiGLUScaleClampForward))
+    .SetInferShapeFn(PD_INFER_SHAPE(FusedSwiGLUScaleInferShape))
+    .SetInferDtypeFn(PD_INFER_DTYPE(FusedSwiGLUScaleInferDtype));
+
+PD_BUILD_GRAD_OP(fused_swiglu_scale_clamp)
+    .Inputs({"X", "Scale", paddle::Grad("Out")})
+    .Outputs({paddle::Grad("X"), paddle::Grad("Scale")})
+    .Attrs({"clamp_value: float"})
+    .SetKernelFn(PD_KERNEL(FusedSwiGLUScaleClampBackward));
+
+PD_BUILD_OP(fused_swiglu_scale_clamp_bwd)
+    .Inputs({"X", "Scale", "DOut"})
+    .Outputs({"DX", "DScale"})
+    .Attrs({"clamp_value: float"})
+    .SetKernelFn(PD_KERNEL(FusedSwiGLUScaleClampBackward))
+    .SetInferShapeFn(PD_INFER_SHAPE(FusedGradInferShape))
+    .SetInferDtypeFn(PD_INFER_DTYPE(FusedGradInferDtype));

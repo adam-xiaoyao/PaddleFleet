@@ -11,7 +11,6 @@
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 # See the License for the specific language governing permissions and
 # limitations under the License.
-import math
 import os
 import sys
 import unittest
@@ -97,12 +96,17 @@ class TestFusedSwigluScaleForwardClamp(unittest.TestCase):
                 paddle.full(result.shape, expected, dtype=result.dtype),
             )
 
-    def test_forward_resolve_clamp_none_is_inf(self):
-        # _resolve_clamp(None) -> math.inf; verify forward stays finite
-        from paddlefleet.fusions.fused_swiglu_scale import _resolve_clamp
+    def test_forward_no_clamp_stays_finite(self):
+        # Without clamp_value, forward should still produce finite results
+        from paddlefleet.fusions.fused_swiglu_scale import (
+            fused_swiglu_scale_forward,
+        )
 
-        self.assertEqual(_resolve_clamp(None), math.inf)
-        self.assertEqual(_resolve_clamp(2.5), 2.5)
+        with _no_cuda():
+            x = paddle.randn([2, 16])
+            scale = paddle.ones([2, 1])
+            result = fused_swiglu_scale_forward(x, scale)
+            self.assertTrue(bool(paddle.isfinite(result).all().item()))
 
 
 class TestFusedSwigluScaleBackward(unittest.TestCase):

@@ -20,7 +20,12 @@ from paddle.autograd.py_layer import PyLayer
 from paddle.distributed import fleet
 from paddle.nn.functional.flash_attention import flashmask_attention
 
-if paddle.cuda.get_device_capability()[0] == 10:
+if paddle.is_compiled_with_cuda() and paddle.device.cuda.device_count() > 0:
+    _is_sm10x = paddle.cuda.get_device_capability()[0] == 10
+else:
+    _is_sm10x = False
+
+if _is_sm10x:
     from paddlefleet_ops.flash_mask.cute.flashmask_utils import (
         FlashMaskInfoPaddle,
     )
