@@ -51,41 +51,29 @@ inline paddle::Tensor GetEmptyTensor(const common::DDim& dims,
     auto kernel =                                                              \
         FusedSPAQKernel<__using_pow2_scaling, __with_prob, ScaleT, use_ue8m0>; \
     kernel<<<grid, block, 0, stream>>>(                                        \
-        x_data, prob_data, out_data, scale_data, rows, cols, clamp_value);     \
+        x_data, prob_data, out_data, scale_data, rows, cols);                  \
   } while (0)
 
-#define LAUNCH_FUSED_SPAQ_VEC4(__using_pow2_scaling, __with_prob) \
-  do {                                                            \
-    auto kernel = FusedSPAQKernelVec4<__using_pow2_scaling,       \
-                                      __with_prob,                \
-                                      thread_per_block,           \
-                                      ScaleT,                     \
-                                      use_ue8m0>;                 \
-    kernel<<<grid, block, 0, stream>>>(x_data,                    \
-                                       prob_data,                 \
-                                       out_data,                  \
-                                       scale_data,                \
-                                       rows,                      \
-                                       cols,                      \
-                                       scale_cols,                \
-                                       clamp_value);              \
+#define LAUNCH_FUSED_SPAQ_VEC4(__using_pow2_scaling, __with_prob)         \
+  do {                                                                    \
+    auto kernel = FusedSPAQKernelVec4<__using_pow2_scaling,               \
+                                      __with_prob,                        \
+                                      thread_per_block,                   \
+                                      ScaleT,                             \
+                                      use_ue8m0>;                         \
+    kernel<<<grid, block, 0, stream>>>(                                   \
+        x_data, prob_data, out_data, scale_data, rows, cols, scale_cols); \
   } while (0)
 
-#define LAUNCH_FUSED_SPAQ_VEC8(__using_pow2_scaling, __with_prob) \
-  do {                                                            \
-    auto kernel = FusedSPAQKernelVec8<__using_pow2_scaling,       \
-                                      __with_prob,                \
-                                      thread_per_block,           \
-                                      ScaleT,                     \
-                                      use_ue8m0>;                 \
-    kernel<<<grid, block, 0, stream>>>(x_data,                    \
-                                       prob_data,                 \
-                                       out_data,                  \
-                                       scale_data,                \
-                                       rows,                      \
-                                       cols,                      \
-                                       scale_cols,                \
-                                       clamp_value);              \
+#define LAUNCH_FUSED_SPAQ_VEC8(__using_pow2_scaling, __with_prob)         \
+  do {                                                                    \
+    auto kernel = FusedSPAQKernelVec8<__using_pow2_scaling,               \
+                                      __with_prob,                        \
+                                      thread_per_block,                   \
+                                      ScaleT,                             \
+                                      use_ue8m0>;                         \
+    kernel<<<grid, block, 0, stream>>>(                                   \
+        x_data, prob_data, out_data, scale_data, rows, cols, scale_cols); \
   } while (0)
 
 #define DISPATCH_BOOL(cond, k_name, ...) \
@@ -112,41 +100,25 @@ typedef struct __align__(4) {
 } fp8_e4m3x4_t;
 
 __device__ __forceinline__ float fast_swiglu(const __nv_bfloat16 x,
-                                             const __nv_bfloat16 y,
-                                             const float clamp_value) {
-  float x_f = __bfloat162float(x);
-  float y_f = __bfloat162float(y);
-  // Clamp inputs (clamp_value=+inf is a no-op)
-  x_f = fminf(x_f, clamp_value);
-  y_f = fmaxf(fminf(y_f, clamp_value), -clamp_value);
+                                             const __nv_bfloat16 y) {
+  const float x_f = __bfloat162float(x);
+  const float y_f = __bfloat162float(y);
   const float silu = x_f * __frcp_rn(1.0f + __expf(-x_f));
   const float result = silu * y_f;
   return result;
 }
 
 __device__ __forceinline__ float4 fast_swiglu_vec4(const bfloat16x4_t& lhs,
-                                                   const bfloat16x4_t& rhs,
-                                                   const float clamp_value) {
-  float x_f_x = __bfloat162float(lhs.x);
-  float x_f_y = __bfloat162float(lhs.y);
-  float x_f_z = __bfloat162float(lhs.z);
-  float x_f_w = __bfloat162float(lhs.w);
+                                                   const bfloat16x4_t& rhs) {
+  const float x_f_x = __bfloat162float(lhs.x);
+  const float x_f_y = __bfloat162float(lhs.y);
+  const float x_f_z = __bfloat162float(lhs.z);
+  const float x_f_w = __bfloat162float(lhs.w);
 
-  float y_f_x = __bfloat162float(rhs.x);
-  float y_f_y = __bfloat162float(rhs.y);
-  float y_f_z = __bfloat162float(rhs.z);
-  float y_f_w = __bfloat162float(rhs.w);
-
-  // Clamp inputs (clamp_value=+inf is a no-op)
-  x_f_x = fminf(x_f_x, clamp_value);
-  x_f_y = fminf(x_f_y, clamp_value);
-  x_f_z = fminf(x_f_z, clamp_value);
-  x_f_w = fminf(x_f_w, clamp_value);
-
-  y_f_x = fmaxf(fminf(y_f_x, clamp_value), -clamp_value);
-  y_f_y = fmaxf(fminf(y_f_y, clamp_value), -clamp_value);
-  y_f_z = fmaxf(fminf(y_f_z, clamp_value), -clamp_value);
-  y_f_w = fmaxf(fminf(y_f_w, clamp_value), -clamp_value);
+  const float y_f_x = __bfloat162float(rhs.x);
+  const float y_f_y = __bfloat162float(rhs.y);
+  const float y_f_z = __bfloat162float(rhs.z);
+  const float y_f_w = __bfloat162float(rhs.w);
 
   const float silu_x = x_f_x * __frcp_rn(1.0f + __expf(-x_f_x));
   const float silu_y = x_f_y * __frcp_rn(1.0f + __expf(-x_f_y));
@@ -180,8 +152,7 @@ __global__ void FusedSPAQKernelVec4(const phi::bfloat16* __restrict__ Xin,
                                     ScaleT* __restrict__ scales,
                                     const int64_t rows,
                                     const int64_t cols,
-                                    const int64_t scale_cols,
-                                    const float clamp_value) {
+                                    const int64_t scale_cols) {
   constexpr int elements_per_thread = 4;
   constexpr int warp_size = 32;
   constexpr int warp_num = thread_per_block / warp_size;
@@ -224,7 +195,7 @@ __global__ void FusedSPAQKernelVec4(const phi::bfloat16* __restrict__ Xin,
     lhs_bf16x4 = *X_lhs_vec;
     rhs_bf16x4 = *X_rhs_vec;
 
-    act_f32x4 = fast_swiglu_vec4(lhs_bf16x4, rhs_bf16x4, clamp_value);
+    act_f32x4 = fast_swiglu_vec4(lhs_bf16x4, rhs_bf16x4);
 
     if constexpr (with_prob) {
       // Warp level sync to avoid syncthreads
@@ -286,8 +257,7 @@ __global__ void FusedSPAQKernelVec8(const phi::bfloat16* __restrict__ Xin,
                                     ScaleT* __restrict__ scales,
                                     const int64_t rows,
                                     const int64_t cols,
-                                    const int64_t scale_cols,
-                                    const float clamp_value) {
+                                    const int64_t scale_cols) {
   constexpr int elements_per_thread = 8;
   constexpr int warp_num = thread_per_block / 32;
   const int lane = threadIdx.x & 31;
@@ -328,8 +298,8 @@ __global__ void FusedSPAQKernelVec8(const phi::bfloat16* __restrict__ Xin,
     rhs_bf16x4_0 = *reinterpret_cast<const bfloat16x4_t*>(&rhs_packed.x);
     rhs_bf16x4_1 = *reinterpret_cast<const bfloat16x4_t*>(&rhs_packed.z);
 
-    act_f32x4_0 = fast_swiglu_vec4(lhs_bf16x4_0, rhs_bf16x4_0, clamp_value);
-    act_f32x4_1 = fast_swiglu_vec4(lhs_bf16x4_1, rhs_bf16x4_1, clamp_value);
+    act_f32x4_0 = fast_swiglu_vec4(lhs_bf16x4_0, rhs_bf16x4_0);
+    act_f32x4_1 = fast_swiglu_vec4(lhs_bf16x4_1, rhs_bf16x4_1);
 
     if constexpr (with_prob) {
       // Warp level sync to avoid syncthreads
@@ -401,8 +371,7 @@ __global__ void FusedSPAQKernel(const phi::bfloat16* __restrict__ Xin,
                                 phi::float8_e4m3fn* __restrict__ out,
                                 ScaleT* __restrict__ scales,
                                 const int rows,
-                                const int cols,
-                                const float clamp_value) {
+                                const int cols) {
   // Configure shared memory
   __shared__ float smem_tile[256];  // Shared memory for activation values
   __shared__ float warp_max[2][4];  // Shared memory for warp maxima (2 quant
@@ -425,9 +394,9 @@ __global__ void FusedSPAQKernel(const phi::bfloat16* __restrict__ Xin,
 
     if constexpr (with_prob) {
       float row_prob = prob[in_y_idx];
-      smem_tile[x_offset] = fast_swiglu(x1, x2, clamp_value) * row_prob;
+      smem_tile[x_offset] = fast_swiglu(x1, x2) * row_prob;
     } else {
-      smem_tile[x_offset] = fast_swiglu(x1, x2, clamp_value);
+      smem_tile[x_offset] = fast_swiglu(x1, x2);
     }
   }
 
@@ -517,8 +486,7 @@ void dispatch_fused_spaq(const phi::bfloat16* x_data,
                          const int rows,
                          const int cols,
                          const bool& using_pow2_scaling,
-                         const bool& with_prob,
-                         const float clamp_value) {
+                         const bool& with_prob) {
   constexpr int thread_per_block = 256;
   dim3 grid;
   dim3 block;
@@ -567,14 +535,11 @@ void dispatch_fused_spaq(const phi::bfloat16* x_data,
   }
 }
 
-// ---- Clamped variant (with clamp_value attribute) ----
-
-std::vector<paddle::Tensor> FusedWeightedSwigluActQuantClampKernel(
+std::vector<paddle::Tensor> FusedWeightedSwigluActQuantKernel(
     const paddle::Tensor& x,
     const paddle::optional<paddle::Tensor>& prob,
     const bool using_pow2_scaling,
-    const bool use_ue8m0,
-    const float clamp_value) {
+    const bool use_ue8m0) {
   auto place = x.place();
   auto stream = x.stream();
 
@@ -667,8 +632,7 @@ std::vector<paddle::Tensor> FusedWeightedSwigluActQuantClampKernel(
                                                   rows,
                                                   cols,
                                                   using_pow2_scaling,
-                                                  !!prob,
-                                                  clamp_value);
+                                                  !!prob);
   } else {
     dispatch_fused_spaq<float, false>(x_data,
                                       prob_data,
@@ -678,38 +642,617 @@ std::vector<paddle::Tensor> FusedWeightedSwigluActQuantClampKernel(
                                       rows,
                                       cols,
                                       using_pow2_scaling,
-                                      !!prob,
-                                      clamp_value);
+                                      !!prob);
   }
 
   return {out, scale};
 }
 
-// ---- Original variant (no clamp_value attribute, internally uses +inf) ----
-
-std::vector<paddle::Tensor> FusedWeightedSwigluActQuantKernel(
-    const paddle::Tensor& x,
-    const paddle::optional<paddle::Tensor>& prob,
-    const bool using_pow2_scaling,
-    const bool use_ue8m0) {
-  return FusedWeightedSwigluActQuantClampKernel(
-      x,
-      prob,
-      using_pow2_scaling,
-      use_ue8m0,
-      std::numeric_limits<float>::infinity());
-}
-
-// ---- Op Registration ----
-
-// Original op (no clamp_value attr, backward compatible)
 PD_BUILD_OP(fuse_weighted_swiglu_fp8_quant)
     .Inputs({"expert_out_list", paddle::Optional("prob")})
     .Attrs({"using_pow2_scaling: bool", "use_ue8m0: bool"})
     .Outputs({"out", "scale"})
     .SetKernelFn(PD_KERNEL(FusedWeightedSwigluActQuantKernel));
 
-// Clamped variant (with clamp_value attr)
+// ==========================================================================
+// Clamped variants (with clamp_value parameter) — new additions
+// ==========================================================================
+
+// ---- Clamped device functions ----
+
+__device__ __forceinline__ float fast_swiglu_clamp(const __nv_bfloat16 x,
+                                                   const __nv_bfloat16 y,
+                                                   const float clamp_value) {
+  float x_f = __bfloat162float(x);
+  float y_f = __bfloat162float(y);
+  // Clamp inputs
+  x_f = fminf(x_f, clamp_value);
+  y_f = fmaxf(fminf(y_f, clamp_value), -clamp_value);
+  const float silu = x_f * __frcp_rn(1.0f + __expf(-x_f));
+  const float result = silu * y_f;
+  return result;
+}
+
+__device__ __forceinline__ float4 fast_swiglu_vec4_clamp(
+    const bfloat16x4_t& lhs, const bfloat16x4_t& rhs, const float clamp_value) {
+  float x_f_x = __bfloat162float(lhs.x);
+  float x_f_y = __bfloat162float(lhs.y);
+  float x_f_z = __bfloat162float(lhs.z);
+  float x_f_w = __bfloat162float(lhs.w);
+
+  float y_f_x = __bfloat162float(rhs.x);
+  float y_f_y = __bfloat162float(rhs.y);
+  float y_f_z = __bfloat162float(rhs.z);
+  float y_f_w = __bfloat162float(rhs.w);
+
+  // Clamp inputs
+  x_f_x = fminf(x_f_x, clamp_value);
+  x_f_y = fminf(x_f_y, clamp_value);
+  x_f_z = fminf(x_f_z, clamp_value);
+  x_f_w = fminf(x_f_w, clamp_value);
+
+  y_f_x = fmaxf(fminf(y_f_x, clamp_value), -clamp_value);
+  y_f_y = fmaxf(fminf(y_f_y, clamp_value), -clamp_value);
+  y_f_z = fmaxf(fminf(y_f_z, clamp_value), -clamp_value);
+  y_f_w = fmaxf(fminf(y_f_w, clamp_value), -clamp_value);
+
+  const float silu_x = x_f_x * __frcp_rn(1.0f + __expf(-x_f_x));
+  const float silu_y = x_f_y * __frcp_rn(1.0f + __expf(-x_f_y));
+  const float silu_z = x_f_z * __frcp_rn(1.0f + __expf(-x_f_z));
+  const float silu_w = x_f_w * __frcp_rn(1.0f + __expf(-x_f_w));
+
+  float4 result;
+  result.x = silu_x * y_f_x;
+  result.y = silu_y * y_f_y;
+  result.z = silu_z * y_f_z;
+  result.w = silu_w * y_f_w;
+  return result;
+}
+
+// ---- Clamped kernel launch macros ----
+
+#define LAUNCH_FUSED_SPAQ_VEC4_CLAMP(__using_pow2_scaling, __with_prob) \
+  do {                                                                  \
+    auto kernel = FusedSPAQKernelVec4Clamp<__using_pow2_scaling,        \
+                                           __with_prob,                 \
+                                           thread_per_block,            \
+                                           ScaleT,                      \
+                                           use_ue8m0>;                  \
+    kernel<<<grid, block, 0, stream>>>(x_data,                          \
+                                       prob_data,                       \
+                                       out_data,                        \
+                                       scale_data,                      \
+                                       rows,                            \
+                                       cols,                            \
+                                       scale_cols,                      \
+                                       clamp_value);                    \
+  } while (0)
+
+#define LAUNCH_FUSED_SPAQ_VEC8_CLAMP(__using_pow2_scaling, __with_prob) \
+  do {                                                                  \
+    auto kernel = FusedSPAQKernelVec8Clamp<__using_pow2_scaling,        \
+                                           __with_prob,                 \
+                                           thread_per_block,            \
+                                           ScaleT,                      \
+                                           use_ue8m0>;                  \
+    kernel<<<grid, block, 0, stream>>>(x_data,                          \
+                                       prob_data,                       \
+                                       out_data,                        \
+                                       scale_data,                      \
+                                       rows,                            \
+                                       cols,                            \
+                                       scale_cols,                      \
+                                       clamp_value);                    \
+  } while (0)
+
+// ---- Clamped kernels (full copy with clamp_value param) ----
+
+template <bool using_pow2_scaling,
+          bool with_prob,
+          int thread_per_block,
+          typename ScaleT,
+          bool use_ue8m0>
+__global__ void FusedSPAQKernelVec4Clamp(const phi::bfloat16* __restrict__ Xin,
+                                         const float* __restrict__ prob,
+                                         phi::float8_e4m3fn* __restrict__ out,
+                                         ScaleT* __restrict__ scales,
+                                         const int64_t rows,
+                                         const int64_t cols,
+                                         const int64_t scale_cols,
+                                         const float clamp_value) {
+  constexpr int elements_per_thread = 4;
+  constexpr int warp_size = 32;
+  constexpr int warp_num = thread_per_block / warp_size;
+
+  const int64_t in_y_idx = blockIdx.x;
+  const int lane = threadIdx.x & (warp_size - 1);
+  const int warp_id = threadIdx.x / warp_size;
+
+  if (in_y_idx >= rows) return;
+
+  const int64_t half_cols = cols / 2;
+
+  extern __shared__ float smem[];
+
+  float warp_max_val[2] = {-FLT_MAX, -FLT_MAX};
+  float warp_sum_val[2] = {0.0f, 0.0f};
+
+  constexpr int kElementsPerThread = elements_per_thread;
+  float act_f32x4[kElementsPerThread];
+
+  const int64_t scale_stride = use_ue8m0 ? 4 : 1;
+
+  for (int64_t iter = lane; iter < half_cols; iter += warp_size) {
+    const int64_t lhs_offset = in_y_idx * cols + iter;
+    const int64_t rhs_offset = in_y_idx * cols + iter + half_cols;
+
+    bfloat16x4_t lhs_bf16x4, rhs_bf16x4;
+    auto* X_lhs_vec = reinterpret_cast<const bfloat16x4_t*>(&Xin[lhs_offset]);
+    auto* X_rhs_vec = reinterpret_cast<const bfloat16x4_t*>(&Xin[rhs_offset]);
+
+    lhs_bf16x4 = *X_lhs_vec;
+    rhs_bf16x4 = *X_rhs_vec;
+
+    float4 act = fast_swiglu_vec4_clamp(lhs_bf16x4, rhs_bf16x4, clamp_value);
+    act_f32x4[0] = act.x;
+    act_f32x4[1] = act.y;
+    act_f32x4[2] = act.z;
+    act_f32x4[3] = act.w;
+
+    if constexpr (with_prob) {
+      float row_prob = prob[in_y_idx];
+      act_f32x4[0] *= row_prob;
+      act_f32x4[1] *= row_prob;
+      act_f32x4[2] *= row_prob;
+      act_f32x4[3] *= row_prob;
+    }
+
+    if constexpr (use_ue8m0) {
+      // UE8M0 scaling path (same logic as original)
+      float block_max = fmaxf(fmaxf(fabsf(act_f32x4[0]), fabsf(act_f32x4[1])),
+                              fmaxf(fabsf(act_f32x4[2]), fabsf(act_f32x4[3])));
+      if constexpr (using_pow2_scaling) {
+        block_max = quantize_ue8m0_pow2(act_f32x4, block_max, 4);
+      } else {
+        block_max = quantize_ue8m0(act_f32x4, block_max, 4);
+      }
+      warp_max_val[0] = fmaxf(warp_max_val[0], block_max);
+    } else {
+      // FP32 scaling path
+      for (int k = 0; k < elements_per_thread; ++k) {
+        warp_max_val[0] = fmaxf(warp_max_val[0], fabsf(act_f32x4[k]));
+        warp_sum_val[0] += act_f32x4[k];
+      }
+    }
+
+    // Store output
+    auto* out_ptr = reinterpret_cast<phi::float8_e4m3fn*>(
+        &out[in_y_idx * half_cols + iter]);
+#pragma unroll
+    for (int k = 0; k < elements_per_thread; ++k) {
+      out_ptr[k] = static_cast<phi::float8_e4m3fn>(act_f32x4[k]);
+    }
+  }
+
+  // Reduction for scaling factors (same as original)
+  if constexpr (use_ue8m0) {
+    warp_max_val[0] = warp_reduce_max(warp_max_val[0]);
+    if (lane == 0) {
+      smem[warp_id] = warp_max_val[0];
+    }
+    __syncthreads();
+    if (warp_id == 0) {
+      float block_max = lane < warp_num ? smem[lane] : -FLT_MAX;
+      block_max = warp_reduce_max(block_max);
+      if (lane == 0) {
+        scales[in_y_idx * scale_stride + 0] = __float2uint_rn(block_max);
+      }
+    }
+  } else {
+    warp_max_val[0] = warp_reduce_max(warp_max_val[0]);
+    warp_sum_val[0] = warp_reduce_sum(warp_sum_val[0]);
+    if (lane == 0) {
+      smem[warp_id * 2] = warp_max_val[0];
+      smem[warp_id * 2 + 1] = warp_sum_val[0];
+    }
+    __syncthreads();
+    if (warp_id == 0) {
+      float block_max = -FLT_MAX, block_sum = 0.0f;
+      if (lane < warp_num) {
+        block_max = smem[lane * 2];
+        block_sum = smem[lane * 2 + 1];
+      }
+      block_max = warp_reduce_max(block_max);
+      block_sum = warp_reduce_sum(block_sum);
+      if (lane == 0) {
+        scales[in_y_idx] = block_max / (block_sum / half_cols);
+      }
+    }
+  }
+}
+
+template <bool using_pow2_scaling,
+          bool with_prob,
+          int thread_per_block,
+          typename ScaleT,
+          bool use_ue8m0>
+__global__ void FusedSPAQKernelVec8Clamp(const phi::bfloat16* __restrict__ Xin,
+                                         const float* __restrict__ prob,
+                                         phi::float8_e4m3fn* __restrict__ out,
+                                         ScaleT* __restrict__ scales,
+                                         const int64_t rows,
+                                         const int64_t cols,
+                                         const int64_t scale_cols,
+                                         const float clamp_value) {
+  constexpr int elements_per_thread = 8;
+  constexpr int warp_num = thread_per_block / 32;
+  const int lane = threadIdx.x & 31;
+  const int warp_id = threadIdx.x / 32;
+  const int64_t in_y_idx = blockIdx.x;
+
+  if (in_y_idx >= rows) return;
+
+  const int64_t half_cols = cols / 2;
+
+  extern __shared__ float smem[];
+
+  float warp_max_val[2] = {-FLT_MAX, -FLT_MAX};
+  float warp_sum_val[2] = {0.0f, 0.0f};
+
+  const int64_t scale_stride = use_ue8m0 ? 4 : 1;
+
+  for (int64_t iter = lane * 2; iter < half_cols; iter += 32 * 2) {
+    const int64_t lhs_offset = in_y_idx * cols + iter;
+    const int64_t rhs_offset = in_y_idx * cols + iter + half_cols;
+
+    float4 lhs_packed = *reinterpret_cast<const float4*>(&Xin[lhs_offset]);
+    float4 rhs_packed = *reinterpret_cast<const float4*>(&Xin[rhs_offset]);
+
+    bfloat16x4_t lhs_bf16x4_0, lhs_bf16x4_1;
+    bfloat16x4_t rhs_bf16x4_0, rhs_bf16x4_1;
+
+    lhs_bf16x4_0 = *reinterpret_cast<const bfloat16x4_t*>(&lhs_packed.x);
+    lhs_bf16x4_1 = *reinterpret_cast<const bfloat16x4_t*>(&lhs_packed.z);
+    rhs_bf16x4_0 = *reinterpret_cast<const bfloat16x4_t*>(&rhs_packed.x);
+    rhs_bf16x4_1 = *reinterpret_cast<const bfloat16x4_t*>(&rhs_packed.z);
+
+    float4 act_f32x4_0 =
+        fast_swiglu_vec4_clamp(lhs_bf16x4_0, rhs_bf16x4_0, clamp_value);
+    float4 act_f32x4_1 =
+        fast_swiglu_vec4_clamp(lhs_bf16x4_1, rhs_bf16x4_1, clamp_value);
+
+    float act[8] = {act_f32x4_0.x,
+                    act_f32x4_0.y,
+                    act_f32x4_0.z,
+                    act_f32x4_0.w,
+                    act_f32x4_1.x,
+                    act_f32x4_1.y,
+                    act_f32x4_1.z,
+                    act_f32x4_1.w};
+
+    if constexpr (with_prob) {
+      float row_prob = prob[in_y_idx];
+      for (int k = 0; k < 8; ++k) act[k] *= row_prob;
+    }
+
+    if constexpr (use_ue8m0) {
+      float block_max = -FLT_MAX;
+      for (int k = 0; k < 8; ++k) block_max = fmaxf(block_max, fabsf(act[k]));
+      if constexpr (using_pow2_scaling) {
+        block_max = quantize_ue8m0_pow2(act, block_max, 8);
+      } else {
+        block_max = quantize_ue8m0(act, block_max, 8);
+      }
+      warp_max_val[0] = fmaxf(warp_max_val[0], block_max);
+    } else {
+      for (int k = 0; k < 8; ++k) {
+        warp_max_val[0] = fmaxf(warp_max_val[0], fabsf(act[k]));
+        warp_sum_val[0] += act[k];
+      }
+    }
+
+    auto* out_ptr = reinterpret_cast<phi::float8_e4m3fn*>(
+        &out[in_y_idx * half_cols + iter]);
+#pragma unroll
+    for (int k = 0; k < 8; ++k) {
+      out_ptr[k] = static_cast<phi::float8_e4m3fn>(act[k]);
+    }
+  }
+
+  // Reduction (same as original)
+  if constexpr (use_ue8m0) {
+    warp_max_val[0] = warp_reduce_max(warp_max_val[0]);
+    if (lane == 0) smem[warp_id] = warp_max_val[0];
+    __syncthreads();
+    if (warp_id == 0) {
+      float block_max = lane < warp_num ? smem[lane] : -FLT_MAX;
+      block_max = warp_reduce_max(block_max);
+      if (lane == 0)
+        scales[in_y_idx * scale_stride + 0] = __float2uint_rn(block_max);
+    }
+  } else {
+    warp_max_val[0] = warp_reduce_max(warp_max_val[0]);
+    warp_sum_val[0] = warp_reduce_sum(warp_sum_val[0]);
+    if (lane == 0) {
+      smem[warp_id * 2] = warp_max_val[0];
+      smem[warp_id * 2 + 1] = warp_sum_val[0];
+    }
+    __syncthreads();
+    if (warp_id == 0) {
+      float block_max = -FLT_MAX, block_sum = 0.0f;
+      if (lane < warp_num) {
+        block_max = smem[lane * 2];
+        block_sum = smem[lane * 2 + 1];
+      }
+      block_max = warp_reduce_max(block_max);
+      block_sum = warp_reduce_sum(block_sum);
+      if (lane == 0) scales[in_y_idx] = block_max / (block_sum / half_cols);
+    }
+  }
+}
+
+// ---- Clamped scalar kernel ----
+
+template <bool using_pow2_scaling,
+          bool with_prob,
+          int thread_per_block,
+          typename ScaleT,
+          bool use_ue8m0>
+__global__ void FusedSPAQKernelClamp(const phi::bfloat16* __restrict__ Xin,
+                                     const float* __restrict__ prob,
+                                     phi::float8_e4m3fn* __restrict__ out,
+                                     ScaleT* __restrict__ scales,
+                                     const int rows,
+                                     const int cols,
+                                     const float clamp_value) {
+  __shared__ float smem_tile[256];
+  __shared__ float warp_max[2][4];
+  __shared__ float warp_sum[2][4];
+
+  const int in_y_idx = blockIdx.x;
+  const int x_offset = threadIdx.x;
+  const int half_cols = cols / 2;
+  const int scale_stride = use_ue8m0 ? 4 : 1;
+
+  if (in_y_idx >= rows) return;
+
+  if (x_offset < half_cols) {
+    const __nv_bfloat16 x1 = Xin[in_y_idx * cols + x_offset];
+    const __nv_bfloat16 x2 = Xin[in_y_idx * cols + x_offset + half_cols];
+
+    if constexpr (with_prob) {
+      float row_prob = prob[in_y_idx];
+      smem_tile[x_offset] = fast_swiglu_clamp(x1, x2, clamp_value) * row_prob;
+    } else {
+      smem_tile[x_offset] = fast_swiglu_clamp(x1, x2, clamp_value);
+    }
+  }
+
+  __syncthreads();
+
+  // Quantization (same as original FusedSPAQKernel)
+  if (x_offset < half_cols) {
+    float val = smem_tile[x_offset];
+    float abs_val = fabsf(val);
+
+    if constexpr (use_ue8m0) {
+      // UE8M0 path
+      if constexpr (using_pow2_scaling) {
+        float block_max = -FLT_MAX;
+        for (int i = 0; i < half_cols; i += 256) {
+          if (i + x_offset < half_cols) {
+            block_max = fmaxf(block_max, fabsf(smem_tile[i + x_offset]));
+          }
+        }
+        block_max = warp_reduce_max(block_max);
+        if (x_offset == 0)
+          scales[in_y_idx * scale_stride + 0] = __float2uint_rn(block_max);
+      }
+      // Write output
+      out[in_y_idx * half_cols + x_offset] =
+          static_cast<phi::float8_e4m3fn>(val);
+    } else {
+      // FP32 scale path
+      float block_max = -FLT_MAX;
+      float block_sum = 0.0f;
+      for (int i = 0; i < half_cols; i += 256) {
+        if (i + x_offset < half_cols) {
+          block_max = fmaxf(block_max, fabsf(smem_tile[i + x_offset]));
+          block_sum += smem_tile[i + x_offset];
+        }
+      }
+      block_max = warp_reduce_max(block_max);
+      block_sum = warp_reduce_sum(block_sum);
+      if (x_offset == 0) {
+        scales[in_y_idx] = block_max / (block_sum / half_cols);
+      }
+      out[in_y_idx * half_cols + x_offset] =
+          static_cast<phi::float8_e4m3fn>(val);
+    }
+  }
+}
+
+// ---- Clamped dispatch function ----
+
+template <typename ScaleT, bool use_ue8m0>
+void dispatch_fused_spaq_clamp(const phi::bfloat16* x_data,
+                               const float* prob_data,
+                               phi::float8_e4m3fn* out_data,
+                               void* scale_data,
+                               cudaStream_t stream,
+                               const int rows,
+                               const int cols,
+                               const bool& using_pow2_scaling,
+                               const bool& with_prob,
+                               const float clamp_value) {
+  constexpr int thread_per_block = 256;
+  dim3 grid;
+  dim3 block;
+
+  if (use_ue8m0 && cols % 8 == 0) {
+    grid.y = rows > 65535 ? 65535 : rows;
+    grid.x = ((cols / 2) + 128 - 1) / 128;
+    block.x = 256;
+
+    DISPATCH_BOOL(using_pow2_scaling,
+                  k_using_pow2_scaling,
+                  DISPATCH_BOOL(with_prob,
+                                k_with_prob,
+                                LAUNCH_FUSED_SPAQ_VEC8_CLAMP(
+                                    k_using_pow2_scaling, k_with_prob);))
+  } else if (cols % 4 == 0) {
+    grid.y = rows > 65535 ? 65535 : rows;
+    grid.x = ((cols / 2) + 64 - 1) / 64;
+    block.x = 256;
+
+    DISPATCH_BOOL(using_pow2_scaling,
+                  k_using_pow2_scaling,
+                  DISPATCH_BOOL(with_prob,
+                                k_with_prob,
+                                LAUNCH_FUSED_SPAQ_VEC4_CLAMP(
+                                    k_using_pow2_scaling, k_with_prob);))
+  } else {
+    grid.x = rows;
+    block.x = thread_per_block;
+
+    DISPATCH_BOOL(
+        using_pow2_scaling,
+        k_using_pow2_scaling,
+        DISPATCH_BOOL(
+            with_prob,
+            k_with_prob,
+            auto kernel = FusedSPAQKernelClamp<k_using_pow2_scaling,
+                                               k_with_prob,
+                                               thread_per_block,
+                                               ScaleT,
+                                               use_ue8m0>;
+            kernel<<<grid, block, 0, stream>>>(x_data,
+                                               prob_data,
+                                               out_data,
+                                               static_cast<ScaleT*>(scale_data),
+                                               rows,
+                                               cols,
+                                               clamp_value);))
+  }
+}
+
+// ---- Clamped host wrapper ----
+
+std::vector<paddle::Tensor> FusedWeightedSwigluActQuantClampKernel(
+    const paddle::Tensor& x,
+    const paddle::optional<paddle::Tensor>& prob,
+    const bool using_pow2_scaling,
+    const bool use_ue8m0,
+    const float clamp_value) {
+  auto place = x.place();
+  auto stream = x.stream();
+
+  // Arguments check
+  PADDLE_ENFORCE_EQ(
+      x.dtype(),
+      phi::DataType::BFLOAT16,
+      common::errors::InvalidArgument("Input X must be bfloat16, but got %s",
+                                      phi::DataTypeToString(x.dtype())));
+
+  if (prob) {
+    PADDLE_ENFORCE_EQ(prob.get().dtype(),
+                      phi::DataType::FLOAT32,
+                      common::errors::InvalidArgument(
+                          "Input prob must be float32, but got %s",
+                          phi::DataTypeToString(prob.get().dtype())));
+  }
+
+  auto x_dims = x.dims();
+  int64_t rows = phi::product(phi::slice_ddim(x_dims, 0, x_dims.size() - 1));
+  int64_t cols = x_dims[x_dims.size() - 1];
+
+  PADDLE_ENFORCE_EQ(cols % 2,
+                    0,
+                    common::errors::InvalidArgument(
+                        "The last dim of Input(X) should be exactly divided "
+                        "by 2, but got %d",
+                        cols));
+
+  if (prob) {
+    PADDLE_ENFORCE_EQ(prob.get().dims()[0],
+                      rows,
+                      common::errors::InvalidArgument(
+                          "The first dim of Input(X) should be equal to the "
+                          "first dim of Input(prob) but got X.shape[0]: %d, "
+                          "prob.shape[0]: %d",
+                          rows,
+                          prob.get().dims()[0]));
+  }
+
+  paddle::Tensor out;
+  paddle::Tensor scale;
+
+  if (use_ue8m0) {
+    auto input_dim = x.dims();
+    const int token_num = input_dim[0];
+    const int hidden_size = input_dim[1];
+
+    PADDLE_ENFORCE(hidden_size % 1024 == 0,
+                   "hidden_size must be divisible by 1024");
+    const int hidden_size_scale = hidden_size / 2 / 128;
+    out = GetEmptyTensor(
+        {token_num, hidden_size / 2}, phi::DataType::FLOAT8_E4M3FN, x.place());
+    const int tma_alignment_bytes = 16;
+    const int tma_alignment_elements = tma_alignment_bytes / sizeof(float);
+
+    int padded_token_num =
+        ((token_num + tma_alignment_elements - 1) / tma_alignment_elements) *
+        tma_alignment_elements;
+    scale = GetEmptyTensor({padded_token_num, ceil_div(hidden_size_scale, 4)},
+                           {1, padded_token_num},
+                           paddle::DataType::INT32,
+                           x.place());
+  } else {
+    scale = GetEmptyTensor(
+        {rows, (cols / 2 + 127) / 128}, phi::DataType::FLOAT32, place);
+    out = GetEmptyTensor({rows, cols / 2}, phi::DataType::FLOAT8_E4M3FN, place);
+  }
+
+  const auto* x_data = x.data<phi::bfloat16>();
+  const float* prob_data = prob ? prob.get().data<float>() : nullptr;
+  auto* out_data = out.data<phi::float8_e4m3fn>();
+
+  void* scale_data;
+  if (use_ue8m0) {
+    scale_data = static_cast<void*>(scale.data<int32_t>());
+  } else {
+    scale_data = static_cast<void*>(scale.data<float>());
+  }
+
+  if (use_ue8m0 && cols % 8 == 0) {
+    dispatch_fused_spaq_clamp<phi::float8_e4m3fn, true>(x_data,
+                                                        prob_data,
+                                                        out_data,
+                                                        scale_data,
+                                                        stream,
+                                                        rows,
+                                                        cols,
+                                                        using_pow2_scaling,
+                                                        !!prob,
+                                                        clamp_value);
+  } else {
+    dispatch_fused_spaq_clamp<float, false>(x_data,
+                                            prob_data,
+                                            out_data,
+                                            scale_data,
+                                            stream,
+                                            rows,
+                                            cols,
+                                            using_pow2_scaling,
+                                            !!prob,
+                                            clamp_value);
+  }
+
+  return {out, scale};
+}
+
+// ---- Clamped op registration ----
+
 PD_BUILD_OP(fuse_weighted_swiglu_fp8_quant_clamp)
     .Inputs({"expert_out_list", paddle::Optional("prob")})
     .Attrs({"using_pow2_scaling: bool",
